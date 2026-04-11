@@ -5,12 +5,12 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
-from zoneinfo import ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,6 +44,7 @@ def load_known_users() -> dict[str, Any]:
 
 
 def save_known_users(data: dict[str, Any]) -> None:
+    USERS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with USERS_PATH.open("w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -57,7 +58,6 @@ def load_timezone():
     try:
         return ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
-        # Fallback for Windows/Python installs without tzdata package.
         if timezone_name == "Asia/Tashkent":
             return timezone(timedelta(hours=5), name="Asia/Tashkent")
         return timezone.utc
@@ -225,11 +225,47 @@ class TelegramBot:
     def api_base(self) -> str:
         return f"https://api.telegram.org/bot{self.token}"
 
-    def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        files: dict[str, tuple[str, bytes, str]] | None = None,
+    ) -> dict[str, Any]:
         params = params or {}
-        encoded = urllib.parse.urlencode(params).encode("utf-8")
-        req = urllib.request.Request(f"{self.api_base}/{method}", data=encoded, method="POST")
-        with urllib.request.urlopen(req, timeout=30) as response:
+
+        if files:
+            boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+            body = bytearray()
+
+            for key, value in params.items():
+                body.extend(f"--{boundary}\r\n".encode())
+                body.extend(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
+                body.extend(str(value).encode("utf-8"))
+                body.extend(b"\r\n")
+
+            for field_name, (filename, content, content_type) in files.items():
+                body.extend(f"--{boundary}\r\n".encode())
+                body.extend(
+                    f'Content-Disposition: form-data; name="{field_name}"; filename="{filename}"\r\n'.encode()
+                )
+                body.extend(f"Content-Type: {content_type}\r\n\r\n".encode())
+                body.extend(content)
+                body.extend(b"\r\n")
+
+            body.extend(f"--{boundary}--\r\n".encode())
+
+            headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+            req = urllib.request.Request(
+                f"{self.api_base}/{method}",
+                data=bytes(body),
+                headers=headers,
+                method="POST",
+            )
+        else:
+            encoded = urllib.parse.urlencode(params).encode("utf-8")
+            req = urllib.request.Request(f"{self.api_base}/{method}", data=encoded, method="POST")
+
+        with urllib.request.urlopen(req, timeout=60) as response:
             payload = json.loads(response.read().decode("utf-8"))
             if not payload.get("ok", False):
                 print(f"[telegram_api] {method} failed: {payload}", flush=True)
@@ -243,10 +279,15 @@ class TelegramBot:
         return result.get("result", [])
 
     def send_message(self, chat_id: int, text: str) -> None:
-        self.request(
-            "sendMessage",
-            {"chat_id": chat_id, "text": text},
-        )
+        self.request("sendMessage", {"chat_id": chat_id, "text": text})
+
+    def get_file(self, file_id: str) -> dict[str, Any]:
+        return self.request("getFile", {"file_id": file_id}).get("result", {})
+
+    def download_file_bytes(self, file_path: str) -> bytes:
+        url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+        with urllib.request.urlopen(url, timeout=60) as response:
+            return response.read()
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN") or CONFIG["bot_token"]
@@ -282,7 +323,11 @@ def help_text() -> str:
         "/list - все активные задачи\n"
         "/today - задачи на сегодня\n"
         "/done TASK_ID - отметить выполненной\n"
-        "/delete TASK_ID - удалить задачу"
+        "/delete TASK_ID - удалить задачу\n\n"
+        "Голосом можно:\n"
+        "- поставить задачу\n"
+        "- спросить задачи на сегодня\n"
+        "- попросить напомнить всей команде о съемке"
     )
 
 
@@ -363,24 +408,123 @@ def handle_add(chat_id: int, text: str, broadcast: bool = False) -> str:
     return f"Задача создана: {task_id}\n{format_datetime(remind_at)}\n{target_name}\n{category}\n{title}"
 
 
+def parse_voice_text(chat_id: int, voice_text: str) -> str:
+    lower = voice_text.lower()
+
+    if "сегодня" in lower and "задач" in lower:
+        return list_text(storage.list_reminders(only_today=True), "Задачи на сегодня:")
+
+    if "всей команде" in lower and "съем" in lower:
+        return (
+            "Я понял это как напоминание всей команде о съемке.\n"
+            "Пока для точного создания задачи отправь текстом:\n"
+            "/broadcast YYYY-MM-DD HH:MM съемка Текст задачи"
+        )
+
+    if "напомни" in lower or "поставь задачу" in lower:
+        return (
+            "Я получил голосовую задачу, но для точного создания напоминания "
+            "мне пока нужен текстовый формат:\n"
+            "/add YYYY-MM-DD HH:MM employee_key category text"
+        )
+
+    return (
+        "Я распознал голосовое, но не смог однозначно понять команду.\n"
+        "Попробуй короче или используй /help."
+    )
+
+
+def transcribe_voice_message(message: dict[str, Any]) -> str:
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return (
+            "Голосовые команды пока не включены полностью: не задан OPENAI_API_KEY "
+            "в Railway Variables."
+        )
+
+    voice = message.get("voice")
+    if not voice:
+        return "Голосовое сообщение не найдено."
+
+    file_info = bot.get_file(voice["file_id"])
+    file_path = file_info.get("file_path")
+    if not file_path:
+        return "Не удалось получить файл голосового сообщения."
+
+    audio_bytes = bot.download_file_bytes(file_path)
+
+    data = {
+        "model": "gpt-4o-mini-transcribe",
+    }
+    files = {
+        "file": ("voice.ogg", audio_bytes, "audio/ogg"),
+    }
+
+    boundary = "----OpenAIAudioBoundary7MA4YWxkTrZu0gW"
+    body = bytearray()
+
+    for key, value in data.items():
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode())
+        body.extend(str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+
+    filename, content, content_type = files["file"]
+    body.extend(f"--{boundary}\r\n".encode())
+    body.extend(f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'.encode())
+    body.extend(f"Content-Type: {content_type}\r\n\r\n".encode())
+    body.extend(content)
+    body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode())
+
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/audio/transcriptions",
+        data=bytes(body),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=120) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+            return payload.get("text", "").strip() or "Не удалось распознать голосовое."
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="ignore")
+        print(f"[voice_transcription] HTTPError: {details}", flush=True)
+        return "Ошибка распознавания голосового через OpenAI."
+    except Exception as exc:
+        print(f"[voice_transcription] {exc}", flush=True)
+        return "Не удалось обработать голосовое сообщение."
+
+
 def handle_message(message: dict[str, Any]) -> None:
     text = message.get("text", "").strip()
-    if not text:
-        return
-
     chat_id = int(message["chat"]["id"])
-    print(
-        f"[update] chat_id={chat_id} username={message['from'].get('username')} text={text}",
-        flush=True,
-    )
+    username = message["from"].get("username")
+
     users = load_known_users()
     users[str(chat_id)] = {
-        "username": message["from"].get("username"),
+        "username": username,
         "full_name": " ".join(
             part for part in [message["from"].get("first_name"), message["from"].get("last_name")] if part
         ).strip(),
     }
     save_known_users(users)
+
+    if message.get("voice"):
+        print(f"[update] chat_id={chat_id} username={username} voice_message", flush=True)
+        transcript = transcribe_voice_message(message)
+        bot.send_message(chat_id, f"Распознанный текст:\n{transcript}")
+        bot.send_message(chat_id, parse_voice_text(chat_id, transcript))
+        return
+
+    if not text:
+        return
+
+    print(f"[update] chat_id={chat_id} username={username} text={text}", flush=True)
 
     if text == "/start":
         bot.send_message(chat_id, "Бот напоминаний подключен.\n" + help_text())
@@ -449,7 +593,7 @@ def reminder_worker() -> None:
                         )
                 storage.mark_sent(int(row["id"]))
         except Exception as exc:
-            print(f"[reminder_worker] {exc}")
+            print(f"[reminder_worker] {exc}", flush=True)
         time.sleep(int(CONFIG.get("reminder_check_interval_seconds", 20)))
 
 

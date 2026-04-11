@@ -1,0 +1,48 @@
+{
+  "bot_token": "PUT_TELEGRAM_BOT_TOKEN_HERE",
+  "timezone": "Asia/Tashkent",
+  "poll_interval_seconds": 2,
+  "reminder_check_interval_seconds": 20,
+  "categories": [
+    "съемка",
+    "сценарий",
+    "монтаж",
+    "дизайн",
+    "публикация",
+    "созвон",
+    "согласование",
+    "выезд",
+    "отчет",
+    "дедлайн",
+    "сторис",
+    "reels"
+  ],
+  "admins": [
+    111111111
+  ],
+  "team": {
+    "manager": {
+      "name": "Project Manager",
+      "chat_id": 111111111
+    },
+    "videograf": {
+      "name": "Videograf",
+      "chat_id": 222222222
+    },
+    "scriptwriter": {
+      "name": "Script Writer",
+      "chat_id": 333333333
+    },
+    "designer": {
+      "name": "Designer",
+      "chat_id": 444444444
+    },
+    "smm": {
+      "name": "SMM Manager",
+      "chat_id": 555555555
+    }
+  },
+  "group_chats": {
+    "main_team": -1001111111111
+  }
+}

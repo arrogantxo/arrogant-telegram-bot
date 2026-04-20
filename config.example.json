@@ -1,0 +1,70 @@
+{
+  "bot_token": "PUT_TELEGRAM_BOT_TOKEN_HERE",
+  "timezone": "Asia/Tashkent",
+  "poll_interval_seconds": 2,
+  "reminder_check_interval_seconds": 20,
+  "categories": [
+    "съемка",
+    "сценарий",
+    "монтаж",
+    "дизайн",
+    "публикация",
+    "созвон",
+    "согласование",
+    "выезд",
+    "отчет",
+    "дедлайн",
+    "сторис",
+    "reels"
+  ],
+  "admins": [
+    406716530
+  ],
+  "team": {
+    "manager": {
+      "name": "Arrogant Studios",
+      "chat_id": 406716530
+    },
+    "montaj": {
+      "name": "Montaj / Mobilegraph",
+      "chat_id": 1620415362
+    },
+    "publisher": {
+      "name": "Instagram Publisher",
+      "chat_id": 1620415362
+    },
+    "videograf": {
+      "name": "Videograf",
+      "chat_id": 222222222
+    },
+    "scriptwriter": {
+      "name": "Script Writer",
+      "chat_id": 333333333
+    },
+    "designer": {
+      "name": "Designer",
+      "chat_id": 444444444
+    },
+    "smm": {
+      "name": "SMM Manager",
+      "chat_id": 555555555
+    },
+    "assistant1": {
+      "name": "Абдулло",
+      "chat_id": 1472364161
+    },
+    "assistant2": {
+      "name": "Мухаммадаюб",
+      "chat_id": 5968575108
+    }
+  },
+  "group_chats": {
+    "main_team": -1001111111111
+  },
+  "notes": {
+    "usage_mode": "The bot now supports human-friendly messages like 'Завтра съемка в 12, монтажер и видеограф'.",
+    "openai_api_key": "Set OPENAI_API_KEY only in Railway Variables, not in this file.",
+    "bot_db_path": "Use BOT_DB_PATH=/data/bot_data.db in Railway Variables.",
+    "bot_users_path": "Use BOT_USERS_PATH=/data/known_users.json in Railway Variables."
+  }
+}

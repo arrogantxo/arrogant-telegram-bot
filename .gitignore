@@ -1,0 +1,5 @@
+config.json
+bot_data.db
+known_users.json
+custom_roles.json
+__pycache__/
